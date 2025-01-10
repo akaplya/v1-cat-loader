@@ -34,7 +34,7 @@ function formatProduct(array $input): array
         "buyable" => true,
         "categoryData" => [
             [
-                "categoryId" => $input['category_id'],
+                "categoryId" => ($input['category_id'] + 100),
                 "categoryPath"=> strtolower(str_replace(' ', '-', $input['category_name'])),
                 "productPosition" => 0
             ]
@@ -76,11 +76,32 @@ function formatPrice(array $input): array
     ];
 }
 
+function formatCategory(array $input): array
+{
+    $modifiedAt = new \DateTime('now');
+    return [
+        "categoryId" => (string)($input["category_id"]+100),
+        "level" => "2",
+        "includeInMenu" => 1,
+        "isActive" => 1,
+        "path" =>  "1/2/" . ($input["category_id"]+100),
+        "name" => $input["category_name"],
+        "description" => $input["category_description"],
+        "image" => $input["category_image"],
+        "storeViewCode" =>  "default",
+        "storeCode" =>  "main_website_store",
+        "websiteCode" => "base",
+        'deleted' => false,
+        'updatedAt' => $modifiedAt->format(\DateTime::ATOM)
+    ];
+}
+
 function getCatalog(string $sourceFile): array
 {
     $row = 1;
     $products = [];
     $output = [];
+    $categories = [];
     if (($handle = fopen($sourceFile, "r")) !== false) {
         while (($data = fgetcsv($handle, 10000, ",")) !== false) {
             $num = count($data);
@@ -90,20 +111,42 @@ function getCatalog(string $sourceFile): array
                 for ($c=0; $c < $num; $c++) {
                     $output[$row][$header[$c]] = mb_convert_encoding($data[$c], 'UTF-8');
                 }
-                if (!empty($data[0])) {
-                    $products[$row] = formatProduct($output[$row]);
-                    $prices[$row] = formatPrice($output[$row]);
-                    echo $products[$row]['sku'] . PHP_EOL;
-                }
+
+                $products[$row] = formatProduct($output[$row]);
+                $prices[$row] = formatPrice($output[$row]);
+                $category = formatCategory($output[$row]);
+                $categories[($category['categoryId'] + 100)] = $category;
+//                echo $products[$row]['sku'] . PHP_EOL;
             }
             $row++;
 
         }
         fclose($handle);
     }
+    $modifiedAt = new \DateTime('now');
+
+    unset($categories['']);
+    $children = array_keys($categories);
+    $categories[] = [
+        "categoryId" => "2",
+        "level" => "1",
+        "includeInMenu" => 1,
+        "isActive" => 1,
+        "path" =>  "1/2",
+        "name" => "Main",
+        "description" => "",
+        "image" => null,
+        "storeViewCode" =>  "default",
+        "storeCode" =>  "main_website_store",
+        "websiteCode" => "base",
+        'deleted' => false,
+        'children' => $children,
+        'updatedAt' => $modifiedAt->format(\DateTime::ATOM)
+    ];
     return [
         'products' => $products,
-        'prices' => $prices
+        'prices' => $prices,
+        'categories' => array_values($categories)
     ];
 }
 
@@ -127,9 +170,14 @@ if(isset($options['environment-id'])) {
 }
 
 
- $httpClient = new \GuzzleHttp\Client([
-     'base_uri' => 'https://commerce.adobe.io'
- ]);
+$data = getCatalog($sourceFile);
+
+//var_dump($data);
+
+
+$httpClient = new \GuzzleHttp\Client([
+    'base_uri' => 'https://commerce.adobe.io'
+]);
 
 $options = [
     'headers' => [
@@ -167,14 +215,15 @@ echo $response->getStatusCode() . PHP_EOL;
 $data = getCatalog($sourceFile);
 $products = json_encode(array_values($data['products']));
 $prices = json_encode(array_values($data['prices']));
+$categories = json_encode(array_values($data['categories']));
 
 $options = [
-        'headers' => [
-            'Content-Type' => 'application/json',
-            'x-api-key' => $publicKey,
-            'x-gw-signature' => getJWT($privateKeyFile)
-        ],
-        'body' => $products
+    'headers' => [
+        'Content-Type' => 'application/json',
+        'x-api-key' => $publicKey,
+        'x-gw-signature' => getJWT($privateKeyFile)
+    ],
+    'body' => $products
 ];
 $response = $httpClient->request(
     'POST',
@@ -202,4 +251,23 @@ $response = $httpClient->request(
 echo $response->getStatusCode() . PHP_EOL;
 
 
+$options = [
+    'headers' => [
+        'Content-Type' => 'application/json',
+        'x-api-key' => $publicKey,
+        'x-gw-signature' => getJWT($privateKeyFile)
+    ],
+    'body' => $categories
+];
+$response = $httpClient->request(
+    'POST',
+    '/feeds/categories/v1/' . $environmentId,
+    $options
+);
+
+
+
+echo $response->getStatusCode() . PHP_EOL;
+
+print_r($categories);
 ?>
